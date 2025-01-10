@@ -133,7 +133,7 @@ extern "C" {
 #define TINYEXR_USE_THREAD (0)  // No threaded loading.
 #else
 #ifndef TINYEXR_MAX_THREADS // if not defined there is no limit
-#define TINYEXR_MAX_THREADS 0
+#define TINYEXR_MAX_THREADS (0)
 #endif
 #endif
 
@@ -5352,7 +5352,7 @@ static int DecodeChunk(EXRImage *exr_image, const EXRHeader *exr_header,
 
     int num_threads = std::max(1, int(std::thread::hardware_concurrency()));
 #if (TINYEXR_MAX_THREADS > 0)
-  num_threads = std::min(num_threads,TINYEXR_MAX_THREADS);
+    num_threads = std::min(num_threads,TINYEXR_MAX_THREADS);
 #endif
     if (num_threads > int(num_blocks)) {
       num_threads = int(num_blocks);
