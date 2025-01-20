@@ -132,7 +132,8 @@ extern "C" {
 #ifndef TINYEXR_USE_THREAD
 #define TINYEXR_USE_THREAD (0)  // No threaded loading.
 #else
-#ifndef TINYEXR_MAX_THREADS // if not defined there is no limit
+// When using threading a reduced custom upperbound can be specified by setting TINYEXR_MAX_THREADS
+#ifndef TINYEXR_MAX_THREADS // if not defined define it as 0 meaning upper limit is taken from hardware_concurrency()
 #define TINYEXR_MAX_THREADS (0)
 #endif
 #endif
@@ -145,6 +146,11 @@ extern "C" {
 #endif
 #endif
 
+#ifndef TINYEXR_USE_COMPILER_FP16
+#define TINYEXR_USE_COMPILER_FP16 (0)
+#endif
+
+#if TINYEXR_USE_COMPILER_FP16
 #ifndef _MSC_VER
 #if defined( __GNUC__ ) || defined( __clang__ )
 #if defined( __SSE2__ )
@@ -154,22 +160,25 @@ extern "C" {
 #endif
 #include <float.h>
 #include <math.h>
-#define TINYEXR_USE_COMPILER_FP16
 #define TINYEXR_FP16_COMPILER_TYPE _Float16
 #endif
 #endif
 #if defined( __ARM_NEON__ ) || defined( __ARM_NEON )
-#define TINYEXR_USE_COMPILER_FP16
 #define TINYEXR_FP16_COMPILER_TYPE __fp16
 #endif
 #endif
 #else
-// on MSVC map to intrinsics for x86 as there is no compiler support
 #if (defined(_M_IX86) || defined(_M_X64)) && defined(__AVX2__)
 #include <intrin.h>
-#define TINYEXR_USE_COMPILER_FP16
 #define TINYEXR_FP16_COMPILER_TYPE uint16_t
 #endif
+#endif
+#endif
+
+#ifdef TINYEXR_FP16_COMPILER_TYPE
+#define TINYEXR_HAS_FP16_COMPILER_TYPE (1)
+#else
+#define TINYEXR_HAS_FP16_COMPILER_TYPE (0)
 #endif
 
 #define TINYEXR_SUCCESS (0)
@@ -949,7 +958,11 @@ static void inline swap8(tinyexr::tinyexr_uint64 *val) {
 }
 
 // https://gist.github.com/rygorous/2156668
-#ifndef TINYEXR_USE_COMPILER_FP16
+#if TINYEXR_HAS_FP16_COMPILER_TYPE && (TINYEXR_USE_COMPILER_FP16 > 0)
+union FP32 {
+  float f;
+};
+#else
 union FP32 {
   unsigned int u;
   float f;
@@ -965,16 +978,21 @@ union FP32 {
 #endif
   } s;
 };
-#else
-union FP32 {
-  float f;
-};
 #endif
+
 #ifdef __clang__
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wpadded"
 #endif
-#ifndef TINYEXR_USE_COMPILER_FP16
+
+#if TINYEXR_HAS_FP16_COMPILER_TYPE && (TINYEXR_USE_COMPILER_FP16 > 0)
+union FP16 {
+  TINYEXR_FP16_COMPILER_TYPE f;
+  unsigned short u;
+};
+
+#else
+
 union FP16 {
   unsigned short u;
   struct {
@@ -989,18 +1007,32 @@ union FP16 {
 #endif
   } s;
 };
-#else
-union FP16 {
-  TINYEXR_FP16_COMPILER_TYPE f;
-  unsigned short u;
-};
 #endif
+
 #ifdef __clang__
 #pragma clang diagnostic pop
 #endif
 
-#ifndef TINYEXR_USE_COMPILER_FP16
-
+#if TINYEXR_HAS_FP16_COMPILER_TYPE && (TINYEXR_USE_COMPILER_FP16 > 0)
+static inline FP32 half_to_float(FP16 h) {
+  FP32 o;
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64)) && defined(__AVX2__)
+   o.f =_mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(static_cast<int> (h.u))));
+#else
+   o.f = static_cast<float> (h.f);
+#endif
+  return o;
+}
+static inline FP16 float_to_half_full(FP32 f) {
+  FP16 o;
+#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64)) && defined(__AVX2__)
+  o.f  = static_cast<TINYEXR_FP16_COMPILER_TYPE> (_mm_cvtsi128_si32(_mm_cvtps_ph(_mm_set_ss(f.f), _MM_FROUND_CUR_DIRECTION)));
+#else
+  o.f = static_cast<TINYEXR_FP16_COMPILER_TYPE> (f.f);
+#endif
+  return o;
+}
+#else
 static FP32 half_to_float(FP16 h) {
   static const FP32 magic = {113 << 23};
   static const unsigned int shifted_exp = 0x7c00
@@ -1058,27 +1090,6 @@ static FP16 float_to_half_full(FP32 f) {
   }
 
   o.s.Sign = f.s.Sign;
-  return o;
-}
-#else
-
-static inline FP32 half_to_float(FP16 h) {
-  FP32 o;
-#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64)) && defined(__AVX2__)
-   o.f =_mm_cvtss_f32(_mm_cvtph_ps(_mm_cvtsi32_si128(static_cast<int> (h.u))));
-#else
-   o.f = static_cast<float> (h.f);
-#endif
-  return o;
-}
-
-static inline FP16 float_to_half_full(FP32 f) {
-  FP16 o;
-#if defined(_MSC_VER) && (defined(_M_IX86) || defined(_M_X64)) && defined(__AVX2__)
-  o.f  = static_cast<TINYEXR_FP16_COMPILER_TYPE> (_mm_cvtsi128_si32(_mm_cvtps_ph(_mm_set_ss(f.f), _MM_FROUND_CUR_DIRECTION)));
-#else
-  o.f = static_cast<TINYEXR_FP16_COMPILER_TYPE> (f.f);
-#endif
   return o;
 }
 #endif
